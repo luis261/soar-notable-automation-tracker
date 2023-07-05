@@ -1,4 +1,6 @@
 # SOAR Notable automation tracker
+![Panels showing the automation progress filtered down to a specific alert](./readme_attachments/single_alert_progress_panels.png)
+
 Currently working on ramping up automatic responses to notable events in your Splunk Enterprise Security instance? Or maybe you've already automated the bulk of the incoming alerts and just want to communicate the value brought to your organization through the operation of your chosen SOAR-system?
 
 This dashboard can help with:
@@ -9,5 +11,4 @@ This dashboard can help with:
 ## Requirements
 TODO
 
-![Panels showing the automation progress filtered down to a specific alert](./readme_attachments/single_alert_progress_panels.png)
 ![Panel showing a treemap of the alerts that needed the most manual analysis time](./readme_attachments/analysis_time_overview.png)
