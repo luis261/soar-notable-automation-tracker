@@ -1,0 +1,290 @@
+<form version="1.1" theme="dark">
+  <search>
+    <query>| inputlookup incident_review_lookup | search disposition="$autoflag$" | stats min(time) as m_time | eval t_zero_minus_quarter = m_time - 90*24*60*60 | eval t_minus_year = t_zero_minus_quarter - 365*24*60*60</query>
+    <done>
+      <set token="pre_automation_start">$result.t_zero_minus_quarter$</set>
+      <set token="pre_automation_start_minus_year">$result.t_minus_year$</set>
+      <set token="min_time">$time_token.earliest$</set>
+      <set token="max_time">$time_token.latest$</set>
+    </done>
+  </search>
+  <label>Notable automation tracker (SOAR)</label>
+  <description>This dashboard can only handle absolute times. I.e. it can't handle the usage of "now"/"-24h@h"/presets like "Last 7 days". Instead, use the "Between" option under the "Date Range" menu. There is no claim of this dashboard tracking the entire value gained through the operation of the given SOAR-system. Obviously it only captures interactions regarding notable events in Splunk (e.g. it ignores any use cases implemented via the SOAR-system that don't directly interact with Splunk notable events). Even regarding notable events, the value tracking is not all-encompassing. By default only the value gained directly through conserved analyst hours via fully automated responses is shown/calculated. But SOAR-systems can also produce value in other ways, e.g. by gathering and correlating data from various systems and displaying them in a single place to ease the triaging/analysis phase of a security incident. The "Pre automation start analysis duration" option regarding the calculation of the conserved analyst time is an attempt to at least partially capture that value by using an older (presumably longer) analysis time average (predating the first autoclosure)</description>
+  <search id="narrow_completion_data">
+    <query>
+| inputlookup incident_review_lookup | search time&gt;$time_token.earliest$ time&lt;$time_token.latest$
+| stats values(rule_name) as rule_name, values(disposition) as disposition, values(time) as times by rule_id, status | eval resolved_time=if(status==4,min(times),now()) | eval closed_time=if(status==5,min(times),now()) | eval completion_time=min(closed_time,resolved_time) | append [
+    | search index=notable earliest=$time_token.earliest$ latest=$time_token.latest$ search_name="*$alert_id$*" | `get_event_id` | eval times=_time | eval rule_id=event_id | eval rule_name=search_name
+]
+| stats values(rule_name) as rule_name, values(disposition) as disposition, values(times) as times, min(completion_time) as completion_time by rule_id
+| eval edit_count=mvcount(times) | search edit_count&gt;1 ```excluding notables that already come in as resolved```
+| search rule_name="*$alert_id$*"
+| eval _time = min(times)
+</query>
+    <sampleRatio>1</sampleRatio>
+  </search>
+  <search id="all_analysis_data">
+    <query>
+| inputlookup incident_review_lookup
+| stats values(rule_name) as rule_name, values(disposition) as disposition, values(time) as times by rule_id, status
+| search NOT disposition="$autoflag$"
+| eval resolved_time=if(status==4,min(times),now()) | eval closed_time=if(status==5,min(times),now()) | eval completion_time=min(closed_time,resolved_time) | eval pend_time=if(status==3,min(times),now()) | eval start_time=if(status==2,min(times),now())
+| stats values(rule_name) as rule_name, values(disposition) as disposition, values(times) as times, min(completion_time) as completion_time, min(pend_time) as pend_time, min(start_time) as analysis_start by rule_id
+| eval analysis_end=min(completion_time, pend_time)
+| search rule_name="*$alert_id$*"
+| eval time = min(times)
+</query>
+    <sampleRatio>1</sampleRatio>
+  </search>
+  <fieldset submitButton="false">
+    <input type="time" token="time_token">
+      <label></label>
+      <default>
+        <earliest>1704063600</earliest>
+        <latest>1956610800</latest>
+      </default>
+      <change>
+        <eval token="min_time">$time_token.earliest$</eval>
+        <eval token="max_time">$time_token.latest$</eval>
+      </change>
+    </input>
+    <input type="text" token="alert_id">
+      <label>Alert ID (number)</label>
+      <default>00</default>
+    </input>
+    <input type="text" token="autoflag">
+      <label>Autoclose flag (disposition)</label>
+      <default>disposition:9</default>
+    </input>
+    <input type="text" token="automation_progress_span">
+      <label>Automation progress timespans</label>
+      <default>2w</default>
+    </input>
+    <input type="dropdown" token="calc_method">
+      <label>Conserved time calculation method</label>
+      <choice value="current">Current analysis duration</choice>
+      <choice value="pre_auto">Pre automation start analysis duration</choice>
+      <change>
+        <eval token="min_time">if($value$="current",$time_token.earliest$,$pre_automation_start_minus_year$)</eval>
+        <eval token="max_time">if($value$="current",$time_token.latest$,$pre_automation_start$)</eval>
+      </change>
+      <default>current</default>
+      <initialValue>current</initialValue>
+    </input>
+    <input type="text" token="analysis_outlier_threshold">
+      <label>Analysis outlier threshold (minutes)</label>
+      <default>75</default>
+      <initialValue>75</initialValue>
+    </input>
+    <input type="text" token="analysis_duration_dev_span">
+      <label>Analysis duration timespans</label>
+      <default>12w</default>
+    </input>
+  </fieldset>
+  <row>
+    <panel depends="$autoflag$">
+      <title>Inverse automation ratio - percentage of events that were not exclusively handled by a playbook (and therefore needed manual intervention)</title>
+      <viz type="horseshoe_meter_app.horseshoe_meter">
+        <title>click the meter to see absolute values</title>
+        <search base="narrow_completion_data">
+          <query>| eval notautoclosed=if(disposition=="$autoflag$",0,1) | stats avg(notautoclosed) as average | eval percent=round(average*100,2) | table percent</query>
+        </search>
+        <option name="horseshoe_meter_app.horseshoe_meter.backgroundColor">#212527</option>
+        <option name="horseshoe_meter_app.horseshoe_meter.dialColor">#53a051</option>
+        <option name="horseshoe_meter_app.horseshoe_meter.maxRangeColor">#d94e17</option>
+        <option name="horseshoe_meter_app.horseshoe_meter.maxRangeThreshold">67</option>
+        <option name="horseshoe_meter_app.horseshoe_meter.maxValue">100</option>
+        <option name="horseshoe_meter_app.horseshoe_meter.midRangeColor">#fbcd2f</option>
+        <option name="horseshoe_meter_app.horseshoe_meter.midRangeThreshold">33</option>
+        <option name="horseshoe_meter_app.horseshoe_meter.minRangeColor">#1182f3</option>
+        <option name="horseshoe_meter_app.horseshoe_meter.minValue">0</option>
+        <option name="horseshoe_meter_app.horseshoe_meter.thresholdStyle">percentage</option>
+        <option name="horseshoe_meter_app.horseshoe_meter.useRangemap">true</option>
+        <option name="horseshoe_meter_app.horseshoe_meter.valueColor">#1182f3</option>
+        <option name="refresh.display">progressbar</option>
+        <drilldown>
+          <set token="automation_ratio_drill">$click.value$</set>
+        </drilldown>
+      </viz>
+    </panel>
+  </row>
+  <row depends="$automation_ratio_drill$">
+    <panel>
+      <title>Count of occurred notable events for the chosen alert ID</title>
+      <single>
+        <search base="narrow_completion_data">
+          <query>| stats count</query>
+          <done>
+            <condition match="$alert_id$!=&quot;00&quot;">
+              <unset token="show_analysis_time_split"></unset>
+            </condition>
+            <condition match="$alert_id$==&quot;00&quot;">
+              <set token="show_analysis_time_split">true</set>
+            </condition>
+          </done>
+        </search>
+        <option name="colorMode">none</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x53a051","0x0877a6","0xf8be34","0xf1813f","0xdc4e41"]</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="useColors">0</option>
+      </single>
+    </panel>
+    <panel depends="$autoflag$">
+      <title>Count of notable events that were processed without any manual analyst intervention (according to the configured flag)</title>
+      <single>
+        <search base="narrow_completion_data">
+          <query>| search disposition="$autoflag$" | stats count</query>
+          <done>
+            <set token="fullauto_count">$result.count$</set>
+          </done>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x53a051","0x53a051"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+  </row>
+  <row>
+    <panel depends="$autoflag$">
+      <title>Progress - automation percentage over time</title>
+      <chart>
+        <search base="narrow_completion_data">
+          <query>| timechart span=$automation_progress_span$ eval((count(eval(disposition="$autoflag$")) / count)*100) as automation_percentage</query>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.drilldown">all</option>
+        <option name="refresh.display">progressbar</option>
+      </chart>
+    </panel>
+  </row>
+  <row depends="$autoflag$">
+    <panel>
+      <title>Average time to completion for events processed with manual involvement (Mean time to respond)</title>
+      <single>
+        <title>click the value to show histogram</title>
+        <search base="narrow_completion_data">
+          <query>| search NOT disposition="$autoflag$" | eval completion_time_m = (completion_time - _time)/60 | stats avg(completion_time_m)</query>
+        </search>
+        <option name="drilldown">all</option>
+        <option name="numberPrecision">0.0</option>
+        <option name="unit">minutes</option>
+        <drilldown>
+          <set token="show_man_completion_distribution">yes</set>
+          <unset token="show_auto_completion_distribution"></unset>
+        </drilldown>
+      </single>
+    </panel>
+    <panel>
+        <title>Average time to completion for events entirely processed by the automated analysis/response logic (Mean time to respond)</title>
+      <single>
+        <title>click the value to show histogram</title>
+        <search base="narrow_completion_data">
+          <query>| search disposition="$autoflag$" | eval completion_time_m = (completion_time - _time)/60 | stats avg(completion_time_m)</query>
+        </search>
+        <option name="drilldown">all</option>
+        <option name="numberPrecision">0.0</option>
+        <option name="unit">minutes</option>
+        <drilldown>
+          <set token="show_auto_completion_distribution">yes</set>
+          <unset token="show_man_completion_distribution"></unset>
+        </drilldown>
+      </single>
+    </panel>
+  </row>
+  <row depends="$show_man_completion_distribution$">
+    <panel>
+      <title>Histogram of completion times for events processed with manual involvement (in hours)</title>
+      <chart>
+        <search base="narrow_completion_data">
+          <query>| search NOT disposition="$autoflag$" | eval completion_time_hs = (completion_time - _time)/3600 | bin span=1 completion_time_hs | stats count by completion_time_hs | sort - count | head 30 | sort + completion_time_hs</query>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.drilldown">all</option>
+      </chart>
+    </panel>
+  </row>
+  <row depends="$show_auto_completion_distribution$">
+    <panel>
+        <title>Histogram of completion times for events processed entirely by the automated analysis/response logic (in hours)</title>
+      <chart>
+        <search base="narrow_completion_data">
+          <query>| search disposition="$autoflag$" | eval first_time = min(times) | eval completion_time_hs = (completion_time - first_time)/3600 | bin span=1 completion_time_hs | stats count by completion_time_hs | sort - count | head 30 | sort + completion_time_hs</query>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.drilldown">all</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel depends="$autoflag$,$min_time$">
+      <title>Average analyst time needed for a single manual analysis/response (excluding outliers longer than $analysis_outlier_threshold$ minutes)</title>
+      <single>
+        <title>click the value to show timechart</title>
+        <search base="all_analysis_data">
+          <query>| search time&gt;$min_time$ time&lt;$max_time$
+| stats values(*) as * by analysis_end | eval analysis_start=min(analysis_start) | eval analysis_time_m = (analysis_end - analysis_start)/60 | where analysis_time_m&lt;$analysis_outlier_threshold$ AND analysis_time_m&gt;0 
+                | stats avg(analysis_time_m) as analysis_time_m</query>
+          <done>
+            <set token="current_avg_analysis_m">$result.analysis_time_m$</set>
+          </done>
+        </search>
+        <option name="drilldown">all</option>
+        <option name="numberPrecision">0.0</option>
+        <option name="unit">minutes</option>
+        <drilldown>
+          <set token="show_analysis_time_development">yes</set>
+        </drilldown>
+      </single>
+    </panel>
+    <panel depends="$fullauto_count$">
+      <title>Estimated amount of conserved analyst hours</title>
+      <single>
+        <title>Calculation method: $calc_method$</title>
+        <search>
+          <query>| makeresults | eval conserved_hours=$current_avg_analysis_m$*$fullauto_count$/60 | fields conserved_hours</query>
+        </search>
+        <option name="numberPrecision">0.0</option>
+        <option name="unit">h</option>
+        <option name="height">115</option>
+        <option name="colorMode">none</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x53a051","0x53a051"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+  </row>
+  <row depends="$show_analysis_time_development$">
+    <panel>
+      <title>Average analysis durations over time (in minutes)</title>
+      <chart>
+        <search base="all_analysis_data">
+          <query>| search time&gt;$min_time$ time&lt;$max_time$
+| stats values(*) as * by analysis_end | eval analysis_start=min(analysis_start) | eval analysis_time_m = (analysis_end - analysis_start)/60 | where analysis_time_m&lt;$analysis_outlier_threshold$ AND analysis_time_m&gt;0 
+          | eval _time = min(time) | timechart span=$analysis_duration_dev_span$ avg(analysis_time_m)</query>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.drilldown">all</option>
+      </chart>
+    </panel>
+  </row>
+  <row>
+    <panel depends="$show_analysis_time_split$">
+      <title>Most expensive alert IDs (in terms of total analysis time in hours)</title>
+      <viz type="treemap_app.treemap">
+        <search base="all_analysis_data">
+          <query>| search time&gt;$time_token.earliest$ time&lt;$time_token.latest$
+| eval alert_id = mvindex(rule_name, 0) | rex field=alert_id ".*?(?&lt;alert_num&gt;[0-9]+).*?"
+| stats values(*) as * by analysis_end, alert_num | eventstats count as analyses_count by alert_num | eval analysis_start=min(analysis_start) | eval analysis_time_m = (analysis_end - analysis_start)/60 | where analysis_time_m&lt;$analysis_outlier_threshold$ AND analysis_time_m&gt;0
+| eval analysis_time_h = analysis_time_m/60 | stats avg(analysis_time_h) as analysis_time_avg_h, min(analyses_count) as a_count by alert_num | eval total_analysis_time_h = a_count*analysis_time_avg_h | eval placeholder=1 | stats sum(total_analysis_time_h) by alert_num, placeholder
+                </query>
+        </search>
+      </viz>
+    </panel>
+  </row>
+</form>
