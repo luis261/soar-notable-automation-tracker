@@ -10,7 +10,7 @@ This dashboard can help with:
 - tracking your automation progress over time
 - selling the added value to management through concrete, quantitative metrics (including MTTR & an estimated sum of conserved analysis time in hours, based on past analysis durations)
   - outliers in terms of analysis time are exluded
-  - the calculated average time also only gets multiplied by the amount of distinct investigations, so when closing a bunch of events at once because they are all identical/related to the current investigation, the corresponding time is not counted multiple times. This is accomplished as seen in the XML like so: `| stats values(*) as * by analysis_end`
+  - the calculated average time also only gets multiplied by the amount of what the dashboard deems as distinct investigations, so when closing a bunch of events at once because they are all identical/related to the current investigation, the corresponding time is not counted multiple times. This is implemented as seen in the XML like so: `| stats values(*) as * by analysis_end`
 
 requirements/assumptions:
 - usage of Splunk Enterprise Security as your SIEM
